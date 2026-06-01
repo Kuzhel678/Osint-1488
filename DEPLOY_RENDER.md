@@ -54,11 +54,11 @@ CHANNEL_ID=@your_channel_here
 
 ## LLM-аналіз
 
-Щоб увімкнути AI-аналіз, додайте в Render:
+Щоб увімкнути AI-аналіз через OpenRouter, додайте в Render:
 
 ```text
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=openrouter/free
 ```
 
 Команда:
@@ -67,7 +67,9 @@ OPENAI_MODEL=gpt-4o-mini
 /aianalyze
 ```
 
-Не додавайте `OPENAI_API_KEY` у GitHub.
+`openrouter/free` автоматично вибирає доступну безкоштовну модель OpenRouter.
+
+Не додавайте `OPENROUTER_API_KEY` у GitHub.
 
 ## Важливо про 24/7
 

@@ -13,7 +13,7 @@ services:
         sync: false
       - key: AUTOPOST_CHANNEL
         value: "False"
-      - key: OPENAI_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
-      - key: OPENAI_MODEL
-        value: gpt-4o-mini
+      - key: OPENROUTER_MODEL
+        value: openrouter/free

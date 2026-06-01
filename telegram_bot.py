@@ -370,12 +370,12 @@ def format_channel_news_item(news_item):
 
 
 def analyze_news_with_llm(news_item):
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
     if not api_key:
-        return "LLM-аналіз вимкнено: не вказано OPENAI_API_KEY."
+        return "LLM-аналіз вимкнено: не вказано OPENROUTER_API_KEY."
 
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    model = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
     prompt = (
         "Проаналізуй OSINT-новину українською мовою. "
         "Дай короткий висновок у 3 пунктах: суть, ризик, чому це важливо. "
@@ -387,15 +387,26 @@ def analyze_news_with_llm(news_item):
     )
     payload = {
         "model": model,
-        "input": prompt,
-        "max_output_tokens": 250,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Ти OSINT-аналітик. Пиши стисло, обережно і без вигаданих фактів.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "max_tokens": 250,
     }
     request = Request(
-        "https://api.openai.com/v1/responses",
+        "https://openrouter.ai/api/v1/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/Kuzhel678/Osint-1488",
+            "X-Title": "OSINT News Bot",
         },
         method="POST",
     )
@@ -406,22 +417,14 @@ def analyze_news_with_llm(news_item):
     except (HTTPError, URLError, TimeoutError, ValueError) as error:
         return f"LLM-аналіз недоступний: {error}"
 
-    output_text = data.get("output_text")
+    choices = data.get("choices", [])
 
-    if output_text:
-        return output_text.strip()
+    if choices:
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
 
-    texts = []
-
-    for item in data.get("output", []):
-        for content in item.get("content", []):
-            text = content.get("text")
-
-            if text:
-                texts.append(text)
-
-    if texts:
-        return "\n".join(texts).strip()
+        if content:
+            return content.strip()
 
     return "LLM-аналіз не повернув текст."
 
