@@ -1134,6 +1134,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply_long_message(update, get_help_text(), reply_markup=get_main_keyboard())
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print(f"Telegram error: {context.error}")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_clearlogs_confirmation(update):
         return
@@ -1196,6 +1200,7 @@ def main():
     app.add_handler(CommandHandler("clearstats", clearstats_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
+    app.add_error_handler(error_handler)
 
     app.job_queue.run_repeating(
         send_alerts,
