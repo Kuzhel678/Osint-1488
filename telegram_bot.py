@@ -1064,6 +1064,7 @@ async def adminpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message += "\n/testalert — тестове сповіщення"
     message += "\n/checkrss — перевірка RSS-джерел"
     message += "\n/channelstatus — перевірка каналу"
+    message += "\n/uptime — інструкція UptimeRobot"
     message += "\n/postimportant — опублікувати важливі новини в канал"
     message += "\n/postsummary — опублікувати зведення в канал"
     message += "\n/autopost_on — увімкнути автопостинг"
@@ -1177,6 +1178,24 @@ async def channelstatus_command(update: Update, context: ContextTypes.DEFAULT_TY
         message += "\nСтатус: бот може писати в канал."
     except Exception as error:
         message += f"\nСтатус: помилка відправки в канал: {error}"
+
+    await update.message.reply_text(message)
+
+
+async def uptime_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://osint-1488.onrender.com").strip()
+    message = (
+        "=== UptimeRobot Keep-Alive ===\n\n"
+        "Створіть HTTP(s) monitor в UptimeRobot і вкажіть URL:\n"
+        f"{render_url}\n\n"
+        "Рекомендований інтервал: 5 хвилин.\n"
+        "Type: HTTP(s)\n"
+        "Keyword check: не потрібен\n\n"
+        "Цей URL відповідає health-сервером бота і допомагає Render Web Service не засинати."
+    )
 
     await update.message.reply_text(message)
 
@@ -1330,6 +1349,7 @@ async def adminhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += "\n/testalert — тестове сповіщення"
     message += "\n/checkrss — перевірка RSS-джерел"
     message += "\n/channelstatus — перевірка каналу"
+    message += "\n/uptime — інструкція UptimeRobot"
     message += "\n/postimportant — опублікувати важливі новини в канал"
     message += "\n/postsummary — опублікувати зведення в канал"
     message += "\n/autopost_on — увімкнути автопостинг"
@@ -1606,6 +1626,7 @@ def main():
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("adminpanel", adminpanel_command))
     app.add_handler(CommandHandler("channelstatus", channelstatus_command))
+    app.add_handler(CommandHandler("uptime", uptime_command))
     app.add_handler(CommandHandler("postimportant", postimportant_command))
     app.add_handler(CommandHandler("postsummary", postsummary_command))
     app.add_handler(CommandHandler("autopost_on", autopost_on_command))
