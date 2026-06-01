@@ -1,6 +1,9 @@
 from datetime import datetime
 import os
+import re
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import feedparser
 
@@ -244,6 +247,70 @@ def sort_news_by_importance(found_news):
     )
 
 
+def extract_article_image_url(link):
+    if not link:
+        return ""
+
+    request = Request(
+        link,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+
+    try:
+        with urlopen(request, timeout=5) as response:
+            html = response.read(300000).decode("utf-8", errors="ignore")
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return ""
+
+    image_patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
+    ]
+
+    for pattern in image_patterns:
+        image_match = re.search(pattern, html, re.IGNORECASE)
+
+        if image_match:
+            return image_match.group(1)
+
+    return ""
+
+
+def extract_image_url(news_item, link=""):
+    media_content = news_item.get("media_content", [])
+
+    if media_content:
+        image_url = media_content[0].get("url", "")
+
+        if image_url:
+            return image_url
+
+    media_thumbnail = news_item.get("media_thumbnail", [])
+
+    if media_thumbnail:
+        image_url = media_thumbnail[0].get("url", "")
+
+        if image_url:
+            return image_url
+
+    for enclosure in news_item.get("enclosures", []):
+        enclosure_type = enclosure.get("type", "")
+        image_url = enclosure.get("href", "")
+
+        if image_url and enclosure_type.startswith("image/"):
+            return image_url
+
+    summary = news_item.get("summary", "")
+    image_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary)
+
+    if image_match:
+        return image_match.group(1)
+
+    return extract_article_image_url(link)
+
+
 def collect_news(sources, keywords):
     found_news = []
     failed_sources = []
@@ -282,6 +349,7 @@ def collect_news(sources, keywords):
                         "published_date": published_date,
                         "source": source,
                         "link": link or "Посилання відсутнє",
+                        "image_url": extract_image_url(news_item, link),
                     }
                 )
 

@@ -11,9 +11,9 @@ from urllib.request import Request, urlopen
 
 import feedparser
 from dotenv import load_dotenv
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.error import NetworkError
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from main import (
     CATEGORIES,
@@ -52,6 +52,7 @@ user_last_request_time = {}
 pending_clearlogs_users = set()
 pending_clearstats_users = set()
 pending_broadcasts = {}
+PENDING_CHANNEL_POSTS = {}
 DEFAULT_BOT_STATS = {
     "/news": 0,
     "/important": 0,
@@ -407,6 +408,51 @@ def format_channel_news_item(news_item):
     )
 
 
+def build_channel_post_text(news_item):
+    conclusion = (
+        "Новина може бути важливою для інформаційного моніторингу, "
+        f"оскільки містить ключове слово: {news_item.get('keyword', 'невідомо')}."
+    )
+    return (
+        f"🟠 {news_item['title']}\n\n"
+        f"↪️ {conclusion}\n\n"
+        f"🏷 Категорія: {news_item['category']}\n"
+        f"🚨 Важливість: {news_item['importance']}\n"
+        f"📡 Джерело: {news_item['source']}\n\n"
+        f"🏆 OSINT News Bot\n"
+        f"🔗 {news_item['link']}"
+    )
+
+
+def remember_news_for_channel_post(user_id, news_items):
+    PENDING_CHANNEL_POSTS[user_id] = {}
+    keyboard = []
+
+    for index, news_item in enumerate(news_items[:5], start=1):
+        post_id = str(index)
+        PENDING_CHANNEL_POSTS[user_id][post_id] = news_item
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"Опублікувати новину {index}",
+                    callback_data=f"post_news:{post_id}",
+                )
+            ]
+        )
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def send_news_to_channel(bot, channel_id, news_item):
+    image_url = news_item.get("image_url", "")
+    caption = build_channel_post_text(news_item)
+
+    if not image_url:
+        raise ValueError("У новини немає картинки в RSS.")
+
+    await bot.send_photo(chat_id=channel_id, photo=image_url, caption=caption[:1024])
+
+
 def analyze_news_with_llm(news_item):
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
@@ -631,6 +677,14 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"\n\n⚠️ Помилки RSS-джерел: {len(failed_sources)}"
 
         await reply_long_message(update, message)
+
+        if is_admin(update.effective_user.id) and found_news:
+            publish_news = found_news[:5]
+            keyboard = remember_news_for_channel_post(update.effective_user.id, publish_news)
+            await update.message.reply_text(
+                "Оберіть новину для публікації в канал:",
+                reply_markup=keyboard,
+            )
     except Exception as error:
         print(f"Помилка /news: {error}")
         await update.message.reply_text("Сталася помилка. Перевірте налаштування бота.")
@@ -1463,6 +1517,40 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"Telegram error: {context.error}")
 
 
+async def channel_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        await query.edit_message_text("У вас немає доступу до цієї дії.")
+        return
+
+    channel_id = get_channel_id()
+
+    if not channel_id:
+        await query.edit_message_text("CHANNEL_ID не вказано. Додайте канал у Render Environment Variables.")
+        return
+
+    post_id = query.data.split(":", 1)[1]
+    user_posts = PENDING_CHANNEL_POSTS.get(query.from_user.id, {})
+    news_item = user_posts.get(post_id)
+
+    if not news_item:
+        await query.edit_message_text("Новину не знайдено. Оновіть список через /news.")
+        return
+
+    try:
+        await send_news_to_channel(context.bot, channel_id, news_item)
+    except ValueError as error:
+        await query.edit_message_text(f"Не вдалося опублікувати: {error}")
+        return
+    except Exception as error:
+        await query.edit_message_text(f"Помилка публікації в канал: {error}")
+        return
+
+    await query.edit_message_text(f"Опубліковано в канал: {news_item['title']}")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_clearlogs_confirmation(update):
         return
@@ -1533,6 +1621,7 @@ def main():
     app.add_handler(CommandHandler("clearlogs", clearlogs_command))
     app.add_handler(CommandHandler("clearstats", clearstats_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(channel_post_callback, pattern="^post_news:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
     app.add_error_handler(error_handler)
 
