@@ -32,6 +32,7 @@ SUBSCRIBERS_FILE = "subscribers.txt"
 SENT_NEWS_FILE = "sent_news.txt"
 TELEGRAM_LOGS_FILE = "telegram_logs.txt"
 BOT_STATS_FILE = "bot_stats.txt"
+DEFAULT_ADMIN_IDS = [730977304]
 user_last_request_time = {}
 pending_clearlogs_users = set()
 pending_clearstats_users = set()
@@ -111,16 +112,23 @@ def ensure_admins_file():
 def get_admin_ids():
     ensure_admins_file()
 
-    admin_ids = []
+    admin_ids = set(DEFAULT_ADMIN_IDS)
+    env_admin_ids = os.getenv("ADMIN_IDS", "")
+
+    for admin_id in env_admin_ids.split(","):
+        admin_id = admin_id.strip()
+
+        if admin_id.isdigit():
+            admin_ids.add(int(admin_id))
 
     with open(ADMINS_FILE, "r", encoding="utf-8") as file:
         for line in file:
             admin_id = line.strip()
 
             if admin_id.isdigit():
-                admin_ids.append(int(admin_id))
+                admin_ids.add(int(admin_id))
 
-    return admin_ids
+    return sorted(admin_ids)
 
 
 def is_admin(user_id):
