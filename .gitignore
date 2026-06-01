@@ -8,6 +8,7 @@ __pycache__/
 admins.txt
 subscribers.txt
 sent_news.txt
+autopost_channel.txt
 
 logs.txt
 telegram_logs.txt

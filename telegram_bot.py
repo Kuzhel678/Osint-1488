@@ -1,8 +1,11 @@
 import os
+import json
 import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import feedparser
 from dotenv import load_dotenv
@@ -33,6 +36,7 @@ SENT_NEWS_FILE = "sent_news.txt"
 TELEGRAM_LOGS_FILE = "telegram_logs.txt"
 BOT_STATS_FILE = "bot_stats.txt"
 DEFAULT_ADMIN_IDS = [730977304]
+AUTOPOST_FILE = "autopost_channel.txt"
 user_last_request_time = {}
 pending_clearlogs_users = set()
 pending_clearstats_users = set()
@@ -256,6 +260,41 @@ def count_lines_in_file(file_name):
     return count
 
 
+def get_news_limit():
+    try:
+        settings = read_settings()
+        news_limit = int(settings.get("news_limit", NEWS_LIMIT))
+
+        if news_limit > 0:
+            return news_limit
+    except Exception:
+        pass
+
+    return NEWS_LIMIT
+
+
+def get_channel_id():
+    return os.getenv("CHANNEL_ID", "").strip()
+
+
+def is_channel_autopost_enabled():
+    env_value = os.getenv("AUTOPOST_CHANNEL", "").strip().lower()
+
+    if env_value in ["true", "1", "yes", "on"]:
+        return True
+
+    if not os.path.exists(AUTOPOST_FILE):
+        return False
+
+    with open(AUTOPOST_FILE, "r", encoding="utf-8") as file:
+        return file.read().strip().lower() == "true"
+
+
+def set_channel_autopost(enabled):
+    with open(AUTOPOST_FILE, "w", encoding="utf-8") as file:
+        file.write("true" if enabled else "false")
+
+
 def add_subscriber(chat_id):
     subscribers = read_set_from_file(SUBSCRIBERS_FILE)
     chat_id = str(chat_id)
@@ -318,6 +357,73 @@ def format_news_message(title, news_items, empty_message="Новин не зна
         news_blocks.append(format_news_item(number, news_item))
 
     return title + "\n\n" + "\n\n────────────\n\n".join(news_blocks)
+
+
+def format_channel_news_item(news_item):
+    return (
+        f"📰 {news_item['title']}\n\n"
+        f"Дата: {news_item['published_date']}\n"
+        f"Категорія: {news_item['category']}\n"
+        f"Важливість: {news_item['importance']}\n"
+        f"Посилання: {news_item['link']}"
+    )
+
+
+def analyze_news_with_llm(news_item):
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    if not api_key:
+        return "LLM-аналіз вимкнено: не вказано OPENAI_API_KEY."
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    prompt = (
+        "Проаналізуй OSINT-новину українською мовою. "
+        "Дай короткий висновок у 3 пунктах: суть, ризик, чому це важливо. "
+        "Не вигадуй фактів поза заголовком.\n\n"
+        f"Назва: {news_item['title']}\n"
+        f"Категорія: {news_item['category']}\n"
+        f"Важливість: {news_item['importance']}\n"
+        f"Посилання: {news_item['link']}"
+    )
+    payload = {
+        "model": model,
+        "input": prompt,
+        "max_output_tokens": 250,
+    }
+    request = Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
+        return f"LLM-аналіз недоступний: {error}"
+
+    output_text = data.get("output_text")
+
+    if output_text:
+        return output_text.strip()
+
+    texts = []
+
+    for item in data.get("output", []):
+        for content in item.get("content", []):
+            text = content.get("text")
+
+            if text:
+                texts.append(text)
+
+    if texts:
+        return "\n".join(texts).strip()
+
+    return "LLM-аналіз не повернув текст."
 
 
 def split_long_message(message):
@@ -402,7 +508,7 @@ def format_operational_summary(news_items):
                 category_news.append(news_item)
 
         if category_news:
-            for news_item in category_news[:NEWS_LIMIT]:
+            for news_item in category_news[:get_news_limit()]:
                 lines.append(f"- {news_item['title']}")
         else:
             lines.append("- немає новин")
@@ -440,6 +546,8 @@ def get_help_text():
         "/clearstats — очистити статистику Telegram-бота\n"
         "/admins — список адміністраторів\n"
         "/adminhelp — службові команди\n"
+        "/lastalerts — останні сповіщення\n"
+        "/aianalyze — AI-аналіз останньої важливої новини\n"
         "/help — допомога"
     )
 
@@ -474,7 +582,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         found_news, failed_sources = get_monitored_news()
         message = format_news_message(
             "📰 Перші 5 новин",
-            found_news[:NEWS_LIMIT],
+            found_news[:get_news_limit()],
             "Новин за заданими ключовими словами не знайдено.",
         )
 
@@ -504,7 +612,7 @@ async def important_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message = format_news_message(
             "🔥 Важливі новини",
-            important_news[:NEWS_LIMIT],
+            important_news[:get_news_limit()],
             "Важливих новин зараз не знайдено.",
         )
 
@@ -861,6 +969,13 @@ async def adminpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     message += "\n/testalert — тестове сповіщення"
     message += "\n/checkrss — перевірка RSS-джерел"
+    message += "\n/channelstatus — перевірка каналу"
+    message += "\n/postimportant — опублікувати важливі новини в канал"
+    message += "\n/postsummary — опублікувати зведення в канал"
+    message += "\n/autopost_on — увімкнути автопостинг"
+    message += "\n/autopost_off — вимкнути автопостинг"
+    message += "\n/aianalyze — AI-аналіз новини"
+    message += "\n/lastalerts — останні сповіщення"
 
     await update.message.reply_text(message)
 
@@ -947,6 +1062,151 @@ async def testalert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Тестове сповіщення надіслано. Отримувачів: {sent_count}")
 
 
+async def channelstatus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    channel_id = get_channel_id()
+
+    if not channel_id:
+        await update.message.reply_text("CHANNEL_ID не вказано. Додайте його в Render Environment Variables.")
+        return
+
+    message = (
+        "=== Channel Status ===\n"
+        f"Канал: {channel_id}\n"
+        f"Автопостинг: {is_channel_autopost_enabled()}"
+    )
+
+    try:
+        await context.bot.send_message(chat_id=channel_id, text="✅ OSINT News Bot підключено до каналу.")
+        message += "\nСтатус: бот може писати в канал."
+    except Exception as error:
+        message += f"\nСтатус: помилка відправки в канал: {error}"
+
+    await update.message.reply_text(message)
+
+
+async def postimportant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    channel_id = get_channel_id()
+
+    if not channel_id:
+        await update.message.reply_text("CHANNEL_ID не вказано.")
+        return
+
+    found_news, failed_sources = get_monitored_news()
+    important_news = []
+
+    for news_item in found_news:
+        if news_item["importance"] == "ВИСОКА":
+            important_news.append(news_item)
+
+    if not important_news:
+        await update.message.reply_text("Важливих новин зараз не знайдено.")
+        return
+
+    message = format_news_message("🚨 Важливі OSINT-новини", important_news[:get_news_limit()])
+
+    if failed_sources:
+        message += f"\n\nRSS-помилки: {len(failed_sources)}"
+
+    await send_long_message(context.bot, channel_id, message)
+    await update.message.reply_text("Важливі новини опубліковано в канал.")
+
+
+async def postsummary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    channel_id = get_channel_id()
+
+    if not channel_id:
+        await update.message.reply_text("CHANNEL_ID не вказано.")
+        return
+
+    found_news, failed_sources = get_monitored_news()
+    summary = format_operational_summary(found_news)
+
+    if failed_sources:
+        summary += f"\n\nRSS-помилки: {len(failed_sources)}"
+
+    await send_long_message(context.bot, channel_id, summary)
+    await update.message.reply_text("Оперативну зведену довідку опубліковано в канал.")
+
+
+async def autopost_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    if not get_channel_id():
+        await update.message.reply_text("CHANNEL_ID не вказано.")
+        return
+
+    set_channel_autopost(True)
+    await update.message.reply_text("Автопостинг у канал увімкнено.")
+
+
+async def autopost_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    set_channel_autopost(False)
+    await update.message.reply_text("Автопостинг у канал вимкнено.")
+
+
+async def aianalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await deny_if_not_admin(update):
+        return
+
+    found_news, failed_sources = get_monitored_news()
+
+    if not found_news:
+        await update.message.reply_text("Новин для AI-аналізу не знайдено.")
+        return
+
+    news_item = found_news[0]
+    analysis = analyze_news_with_llm(news_item)
+    message = (
+        "=== AI OSINT-аналіз ===\n\n"
+        f"{format_channel_news_item(news_item)}\n\n"
+        f"Висновок:\n{analysis}"
+    )
+
+    if failed_sources:
+        message += f"\n\nRSS-помилки: {len(failed_sources)}"
+
+    await reply_long_message(update, message)
+
+
+async def lastalerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(SENT_NEWS_FILE) or os.path.getsize(SENT_NEWS_FILE) == 0:
+        await update.message.reply_text("Надісланих сповіщень ще немає.")
+        return
+
+    with open(SENT_NEWS_FILE, "r", encoding="utf-8") as file:
+        alerts = []
+
+        for line in file:
+            alert = line.strip()
+
+            if alert:
+                alerts.append(alert)
+
+    if not alerts:
+        await update.message.reply_text("Надісланих сповіщень ще немає.")
+        return
+
+    lines = ["=== Останні сповіщення ==="]
+
+    for index, alert in enumerate(alerts[-10:], start=1):
+        lines.append(f"{index}. {alert}")
+
+    await reply_long_message(update, "\n".join(lines))
+
+
 async def adminhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await deny_if_not_admin(update):
         return
@@ -974,6 +1234,13 @@ async def adminhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message += "\n/testalert — тестове сповіщення"
     message += "\n/checkrss — перевірка RSS-джерел"
+    message += "\n/channelstatus — перевірка каналу"
+    message += "\n/postimportant — опублікувати важливі новини в канал"
+    message += "\n/postsummary — опублікувати зведення в канал"
+    message += "\n/autopost_on — увімкнути автопостинг"
+    message += "\n/autopost_off — вимкнути автопостинг"
+    message += "\n/aianalyze — AI-аналіз новини"
+    message += "\n/lastalerts — останні сповіщення"
 
     await update.message.reply_text(message)
 
@@ -1104,8 +1371,10 @@ async def handle_clearstats_confirmation(update: Update):
 
 async def send_alerts(context: ContextTypes.DEFAULT_TYPE):
     subscribers = read_set_from_file(SUBSCRIBERS_FILE)
+    channel_id = get_channel_id()
+    should_post_to_channel = bool(channel_id and is_channel_autopost_enabled())
 
-    if not subscribers:
+    if not subscribers and not should_post_to_channel:
         return
 
     found_news, failed_sources = get_monitored_news()
@@ -1123,7 +1392,7 @@ async def send_alerts(context: ContextTypes.DEFAULT_TYPE):
     if not alert_news:
         return
 
-    message = format_news_message("🚨 OSINT-сповіщення", alert_news[:NEWS_LIMIT])
+    message = format_news_message("🚨 OSINT-сповіщення", alert_news[:get_news_limit()])
 
     if failed_sources:
         message += f"\n\n⚠️ Помилки RSS-джерел: {len(failed_sources)}"
@@ -1133,6 +1402,12 @@ async def send_alerts(context: ContextTypes.DEFAULT_TYPE):
             await send_long_message(context.bot, int(chat_id), message)
         except Exception as error:
             print(f"Не вдалося надіслати повідомлення {chat_id}: {error}")
+
+    if should_post_to_channel:
+        try:
+            await send_long_message(context.bot, channel_id, message)
+        except Exception as error:
+            print(f"Не вдалося опублікувати новини в канал {channel_id}: {error}")
 
     write_set_to_file(SENT_NEWS_FILE, new_sent_links)
 
@@ -1199,6 +1474,13 @@ def main():
     app.add_handler(CommandHandler("addadmin", addadmin_command))
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("adminpanel", adminpanel_command))
+    app.add_handler(CommandHandler("channelstatus", channelstatus_command))
+    app.add_handler(CommandHandler("postimportant", postimportant_command))
+    app.add_handler(CommandHandler("postsummary", postsummary_command))
+    app.add_handler(CommandHandler("autopost_on", autopost_on_command))
+    app.add_handler(CommandHandler("autopost_off", autopost_off_command))
+    app.add_handler(CommandHandler("aianalyze", aianalyze_command))
+    app.add_handler(CommandHandler("lastalerts", lastalerts_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("testalert", testalert_command))
     app.add_handler(CommandHandler("adminhelp", adminhelp_command))
