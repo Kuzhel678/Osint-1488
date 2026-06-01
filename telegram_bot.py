@@ -2,6 +2,8 @@ import os
 import json
 import threading
 import time
+import socket
+import asyncio
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -37,6 +39,15 @@ TELEGRAM_LOGS_FILE = "telegram_logs.txt"
 BOT_STATS_FILE = "bot_stats.txt"
 DEFAULT_ADMIN_IDS = [730977304]
 AUTOPOST_FILE = "autopost_channel.txt"
+NEWS_CACHE_TTL_SECONDS = int(os.getenv("NEWS_CACHE_TTL_SECONDS", "300"))
+NEWS_CACHE_REFRESH_SECONDS = int(os.getenv("NEWS_CACHE_REFRESH_SECONDS", "300"))
+RSS_TIMEOUT_SECONDS = int(os.getenv("RSS_TIMEOUT_SECONDS", "10"))
+NEWS_CACHE = {
+    "news": None,
+    "failed_sources": [],
+    "updated_at": 0,
+}
+socket.setdefaulttimeout(RSS_TIMEOUT_SECONDS)
 user_last_request_time = {}
 pending_clearlogs_users = set()
 pending_clearstats_users = set()
@@ -319,7 +330,7 @@ def remove_subscriber(chat_id):
     return True
 
 
-def get_monitored_news():
+def fetch_monitored_news():
     keywords = read_lines_from_file(KEYWORDS_FILE, "ключові слова")
     sources = read_lines_from_file(SOURCES_FILE, "RSS-джерела")
 
@@ -330,6 +341,31 @@ def get_monitored_news():
     found_news = sort_news_by_importance(found_news)
 
     return found_news, failed_sources
+
+
+def refresh_news_cache():
+    found_news, failed_sources = fetch_monitored_news()
+    NEWS_CACHE["news"] = found_news
+    NEWS_CACHE["failed_sources"] = failed_sources
+    NEWS_CACHE["updated_at"] = time.time()
+    return found_news, failed_sources
+
+
+def get_monitored_news(force_refresh=False):
+    cached_news = NEWS_CACHE["news"]
+
+    if not force_refresh and cached_news is not None:
+        return cached_news, NEWS_CACHE["failed_sources"]
+
+    return refresh_news_cache()
+
+
+async def refresh_news_cache_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await asyncio.to_thread(refresh_news_cache)
+        print("RSS cache updated")
+    except Exception as error:
+        print(f"RSS cache update error: {error}")
 
 
 def format_news_item(number, news_item):
@@ -1171,7 +1207,8 @@ async def aianalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     news_item = found_news[0]
-    analysis = analyze_news_with_llm(news_item)
+    await update.message.reply_text("AI-аналіз запущено. Зачекайте кілька секунд.")
+    analysis = await asyncio.to_thread(analyze_news_with_llm, news_item)
     message = (
         "=== AI OSINT-аналіз ===\n\n"
         f"{format_channel_news_item(news_item)}\n\n"
@@ -1494,6 +1531,12 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
     app.add_error_handler(error_handler)
+
+    app.job_queue.run_repeating(
+        refresh_news_cache_job,
+        interval=NEWS_CACHE_REFRESH_SECONDS,
+        first=1,
+    )
 
     app.job_queue.run_repeating(
         send_alerts,

@@ -17,3 +17,7 @@ services:
         sync: false
       - key: OPENROUTER_MODEL
         value: openrouter/free
+      - key: NEWS_CACHE_REFRESH_SECONDS
+        value: "300"
+      - key: RSS_TIMEOUT_SECONDS
+        value: "10"

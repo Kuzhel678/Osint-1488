@@ -59,6 +59,8 @@ CHANNEL_ID=@your_channel_here
 ```text
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENROUTER_MODEL=openrouter/free
+NEWS_CACHE_REFRESH_SECONDS=300
+RSS_TIMEOUT_SECONDS=10
 ```
 
 Команда:
@@ -70,6 +72,17 @@ OPENROUTER_MODEL=openrouter/free
 `openrouter/free` автоматично вибирає доступну безкоштовну модель OpenRouter.
 
 Не додавайте `OPENROUTER_API_KEY` у GitHub.
+
+## Швидкість відповідей
+
+Бот кешує RSS-новини в пам'яті і оновлює кеш у фоні.
+
+```text
+NEWS_CACHE_REFRESH_SECONDS=300
+RSS_TIMEOUT_SECONDS=10
+```
+
+Команди `/news`, `/important`, `/summary` використовують кеш, тому відповідають значно швидше, ніж пряме читання RSS при кожному запиті.
 
 ## Важливо про 24/7
 
