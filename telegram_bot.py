@@ -419,7 +419,6 @@ def build_channel_post_text(news_item):
         f"🏷 Категорія: {news_item['category']}\n"
         f"🚨 Важливість: {news_item['importance']}\n"
         f"📡 Джерело: {news_item['source']}\n\n"
-        f"🏆 OSINT News Bot\n"
         f"🔗 {news_item['link']}"
     )
 
