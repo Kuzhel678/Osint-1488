@@ -64,6 +64,7 @@ NEWS_BUTTON = "📰 Новини"
 IMPORTANT_BUTTON = "🚨 Важливі"
 SUMMARY_BUTTON = "📊 Зведення"
 HELP_BUTTON = "ℹ️ Допомога"
+AI_ANALYZE_BUTTON = "🧠 AI-аналіз"
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -92,7 +93,8 @@ def start_health_server():
 def get_main_keyboard():
     keyboard = [
         [NEWS_BUTTON, IMPORTANT_BUTTON],
-        [SUMMARY_BUTTON, HELP_BUTTON],
+        [SUMMARY_BUTTON, AI_ANALYZE_BUTTON],
+        [HELP_BUTTON],
     ]
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1479,6 +1481,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await important_command(update, context)
     elif text == SUMMARY_BUTTON:
         await summary_command(update, context)
+    elif text == AI_ANALYZE_BUTTON:
+        await aianalyze_command(update, context)
     elif text == HELP_BUTTON:
         await help_command(update, context)
 
