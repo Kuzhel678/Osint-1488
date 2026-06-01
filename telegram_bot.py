@@ -1,6 +1,8 @@
 import os
+import threading
 import time
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedparser
 from dotenv import load_dotenv
@@ -46,6 +48,29 @@ NEWS_BUTTON = "📰 Новини"
 IMPORTANT_BUTTON = "🚨 Важливі"
 SUMMARY_BUTTON = "📊 Зведення"
 HELP_BUTTON = "ℹ️ Допомога"
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OSINT News Bot is running")
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+    port = os.getenv("PORT")
+
+    if not port:
+        return
+
+    server = ThreadingHTTPServer(("0.0.0.0", int(port)), HealthCheckHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    print(f"Health server started on port {port}")
 
 
 def get_main_keyboard():
@@ -1133,6 +1158,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     ensure_admins_file()
+    start_health_server()
     telegram_token = get_bot_token()
 
     if not telegram_token:
